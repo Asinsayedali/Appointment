@@ -1,5 +1,6 @@
 import boto3
 import os
+from django.contrib import messages
 from django.shortcuts import render, redirect
 from boto3.dynamodb.conditions import Key
 from django.http import JsonResponse
@@ -197,3 +198,64 @@ def dashboard(request):
         'is_doctor': user.get('role') == 'doctor'
     }
     return render(request, 'dashboard.html', context)
+
+def forgot_password(request):
+    if request.method == 'POST':
+        email = request.POST.get('email', '').strip()
+        try:
+            # Initiate password reset
+            response = cognito_client.forgot_password(
+                ClientId=USER_POOL_CLIENT_ID,
+                Username=email
+            )
+            request.session['reset_email'] = email
+            return redirect('reset_password')
+        
+        except cognito_client.exceptions.UserNotFoundException:
+            error = "User with this email does not exist"
+        except cognito_client.exceptions.InvalidParameterException:
+            error = "Please enter a valid email address"
+        except Exception as e:
+            error = f"Error initiating password reset: {str(e)}"
+        
+        return render(request, 'forgot_password.html', {'error': error})
+    
+    return render(request, 'forgot_password.html')
+
+def reset_password(request):
+    email = request.session.get('reset_email')
+    if not email:
+        return redirect('forgot_password')
+    
+    if request.method == 'POST':
+        code = request.POST.get('code', '').strip()
+        new_password = request.POST.get('new_password', '').strip()
+        confirm_password = request.POST.get('confirm_password', '').strip()
+
+        if new_password != confirm_password:
+            return render(request, 'reset_password.html', 
+                         {'error': "Passwords do not match", 'email': email})
+
+        try:
+            # Confirm password reset
+            response = cognito_client.confirm_forgot_password(
+                ClientId=USER_POOL_CLIENT_ID,
+                Username=email,
+                ConfirmationCode=code,
+                Password=new_password
+            )
+            del request.session['reset_email']
+            messages.success(request, "Password reset succesfully!!")
+            return redirect('login')
+        
+        except cognito_client.exceptions.CodeMismatchException:
+            error = "Invalid verification code"
+        except cognito_client.exceptions.ExpiredCodeException:
+            error = "Verification code has expired"
+        except Exception as e:
+            error = f"Password reset failed: {str(e)}"
+        
+        return render(request, 'reset_password.html', 
+                    {'error': error, 'email': email})
+    
+    return render(request, 'reset_password.html', {'email': email})
