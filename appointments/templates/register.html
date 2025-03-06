@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="auth-form mx-auto">
+<div class="auth-form mx-auto text-center">
     <h2>Create Account</h2>
     {% if error %}
     <div class="alert alert-danger">{{ error }}</div>
     {% endif %}
 
-    <form method="POST">
+    <form method="POST" class="d-inline-block text-start" style="max-width: 300px; width: 100%;">
         {% csrf_token %}
         <div class="mb-3">
             <label class="form-label">Full Name</label>
@@ -57,5 +57,27 @@
         <button type="submit" class="btn btn-primary w-100">Register</button>
         <p class="mt-3">Already have an account? <a href="{% url 'login' %}">Login here</a></p>
     </form>
+
 </div>
+
+
+<script>
+    function toggleSpecialization() {
+        var roleSelect = document.getElementById("id_role");
+        var specializationField = document.getElementById("specialization-field");
+
+        if (roleSelect.value === "doctor") {
+            specializationField.style.display = "block";
+        } else {
+            specializationField.style.display = "none";
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+        toggleSpecialization(); // Ensure proper visibility after reload
+    });
+
+    // Attach the function to the role dropdown
+    document.getElementById("id_role").addEventListener("change", toggleSpecialization);
+</script>
 {% endblock %}
