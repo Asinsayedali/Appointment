@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>Welcome, {{ user.full_name }}</h1>
+    
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Account Details</h5>
+            <p class="card-text">
+                <strong>Email:</strong> {{ user.email }}<br>
+                <strong>Role:</strong> {{ user.role|title }}<br>
+                {% if user.specialization %}
+                <strong>Specialization:</strong> {{ user.specialization }}
+                {% endif %}
+            </p>
+            <a href="{% url 'logout' %}" class="btn btn-danger">Logout</a>
+        </div>
+    </div>
+
+    {% if is_doctor %}
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Doctor Dashboard</h5>
+            <!-- Add doctor-specific content -->
+        </div>
+    </div>
+    {% else %}
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Patient Dashboard</h5>
+            <!-- Add patient-specific content -->
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
