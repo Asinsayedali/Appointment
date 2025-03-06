@@ -116,7 +116,7 @@ def confirm_email(request):
             
             # Clear session data
             del request.session['pending_user']
-            
+            messages.success(request, "User registered succesfully! you can login now.")
             return redirect('login')
 
         except Exception as e:
