@@ -86,25 +86,5 @@
     document.addEventListener("DOMContentLoaded", function () {
         toggleSpecialization(); // Ensure proper visibility after reload
     });
-
-    // Attach the function to the role dropdown
-    document.getElementById("id_role").addEventListener("change", toggleSpecialization);
-    document.getElementById('id_password1').addEventListener('input', function(e) {
-    const password = e.target.value;
-    const styles = "text-success small"; // Valid style
-    const invalidStyles = "text-danger small"; // Invalid style
-
-    // Check length
-    document.getElementById('length').className = password.length >= 8 ? styles : invalidStyles;
-    
-    // Check uppercase
-    document.getElementById('uppercase').className = /[A-Z]/.test(password) ? styles : invalidStyles;
-    
-    // Check lowercase
-    document.getElementById('lowercase').className = /[a-z]/.test(password) ? styles : invalidStyles;
-    
-    // Check number
-    document.getElementById('number').className = /[0-9]/.test(password) ? styles : invalidStyles;
-});
 </script>
 {% endblock %}

@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>Doctor Dashboard - Welcome, Dr. {{ user.full_name }}</h1>
+    {% if messages %}
+    <div class="messages">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    </div>
+   {% endif %}
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+    <!-- Account Details Card -->
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Professional Details</h5>
+            <p class="card-text">
+                <strong>Email:</strong> {{ user.email }}<br>
+                <strong>Full Name:</strong> Dr. {{ user.full_name }}<br>
+                <strong>Phone:</strong> {{ user.phone_number }}<br>
+                <strong>Specialization:</strong> {{ user.specialization }}<br>
+                <strong>Gender:</strong> {{ user.gender|title }}<br>
+            </p>
+            <div class="btn-group">
+                <a href="{% url 'update_profile' %}" class="btn btn-primary btn-sm">Update Profile</a>
+                <a href="{% url 'logout' %}" class="btn btn-warning btn-sm">Logout</a>
+                <a href="{% url 'delete_account' %}" class="btn btn-danger btn-sm">Delete Account</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Appointments Sections -->
+    <div class="row mt-4">
+        
+        <!-- Pending Appointments -->
+        <div class="col-md-12 mb-4">
+            <div class="card">
+                <div class="card-header bg-warning text-white">
+                    <h5 class="card-title mb-0">Pending Appointments ({{ pending_appointments|length }})</h5>
+                </div>
+                <div class="card-body">
+                    {% if pending_appointments %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Patient Name</th>
+                                    <th>Date</th>
+                                    <th>Time</th>
+                                    <th>Reason</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for appointment in pending_appointments %}
+                                <tr>
+                                    <td>{{ appointment.patient_name }}</td>
+                                    <td>{{ appointment.appointment_date }}</td>
+                                    <td>{{ appointment.appointment_time }}</td>
+                                    <td>{{ appointment.reason|truncatechars:40 }}</td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <form method="POST" action="{% url 'approve_appointment' appointment.appointment_id %}">
+                                                {% csrf_token %}
+                                                <button type="submit" class="btn btn-success btn-sm">
+                                                    <i class="bi bi-check-circle"></i> Approve
+                                                </button>
+                                            </form>
+                                            <button type="button" class="btn btn-danger btn-sm ms-2" 
+                                                    data-bs-toggle="modal" 
+                                                    data-bs-target="#rejectModal{{ appointment.appointment_id|slugify }}">
+                                                <i class="bi bi-x-circle"></i> Reject
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info mb-0">
+                        No pending appointments at this time.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Approved Appointments -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="card-title mb-0">Approved Appointments ({{ approved_appointments|length }})</h5>
+                </div>
+                <div class="card-body">
+                    {% if approved_appointments %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>Date</th>
+                                    <th>Time</th>
+                                    <th>Prescription</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for appointment in approved_appointments %}
+                                <tr>
+                                    <td>{{ appointment.patient_name }}</td>
+                                    <td>{{ appointment.appointment_date }}</td>
+                                    <td>{{ appointment.appointment_time }}</td>
+                                    <td>
+                                        {% if appointment.prescription_url %}
+                                            <span class="badge bg-success">Uploaded</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Not Uploaded</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group">
+                                            {% if appointment.prescription_url %}
+                                                <a href="{% url 'view_prescription' appointment.appointment_id %}" class="btn btn-info btn-sm" target="_blank">
+                                                    <i class="bi bi-eye"></i> View
+                                                </a>
+                                            {% else %}
+                                                <button type="button" class="btn btn-primary btn-sm" 
+                                                        data-bs-toggle="modal" 
+                                                        data-bs-target="#uploadPrescriptionModal{{ appointment.appointment_id|slugify }}">
+                                                    <i class="bi bi-upload"></i> Upload Prescription
+                                                </button>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info mb-0">
+                        No approved appointments currently scheduled.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Rejected Appointments -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="card-title mb-0">Rejected Appointments ({{ rejected_appointments|length }})</h5>
+                </div>
+                <div class="card-body">
+                    {% if rejected_appointments %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Patient</th>
+                                    <th>Date</th>
+                                    <th>Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for appointment in rejected_appointments %}
+                                <tr>
+                                    <td>{{ appointment.patient_name }}</td>
+                                    <td>{{ appointment.appointment_date }}</td>
+                                    <td>{{ appointment.reason|default:"No reason provided"|truncatechars:50 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info mb-0">
+                        No rejected appointments in recent history.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Rejection Modals -->
+{% for appointment in pending_appointments %}
+<div class="modal fade" id="rejectModal{{ appointment.appointment_id|slugify }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Reject Appointment</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{% url 'reject_appointment' appointment.appointment_id %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p>Patient: <strong>{{ appointment.patient_name }}</strong></p>
+                    <p>Date: <strong>{{ appointment.appointment_date }}</strong></p>
+                    <div class="mb-3">
+                        <label for="reason" class="form-label">Reason for Rejection</label>
+                        <textarea class="form-control" name="reason" rows="3" required 
+                                  placeholder="Please provide a reason for rejection..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Confirm Rejection</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Upload Prescription Modals for Approved Appointments -->
+{% for appointment in approved_appointments %}
+{% if not appointment.prescription_url %}
+<div class="modal fade" id="uploadPrescriptionModal{{ appointment.appointment_id|slugify }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Upload Prescription</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{% url 'upload_prescription' appointment.appointment_id %}" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p>Patient: <strong>{{ appointment.patient_name }}</strong></p>
+                    <p>Date: <strong>{{ appointment.appointment_date }}</strong> at <strong>{{ appointment.appointment_time }}</strong></p>
+                    <div class="mb-3">
+                        <label for="prescription_file" class="form-label">Upload Prescription Document</label>
+                        <input type="file" class="form-control" id="prescription_file" name="prescription_file" required
+                               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+                        <div class="form-text">Supported formats: PDF, Word documents, and images (JPG, PNG)</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Upload Prescription</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% else %}
+
+{% endif %}
+{% endfor %}
+
+<!-- Delete Account Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Account Deletion</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <h5>Warning!</h5>
+                    <p class="mb-0">This action is permanent and cannot be undone. All your appointments and data will be deleted immediately.</p>
+                </div>
+                <p>Are you absolutely sure you want to delete your account?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="POST" action="{% url 'delete_account' %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger">Delete My Account</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize tooltips
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => 
+        new bootstrap.Tooltip(tooltipTriggerEl));
+    
+    // Auto-focus on rejection reason textarea
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.addEventListener('shown.bs.modal', function() {
+            const textarea = this.querySelector('textarea');
+            if(textarea) textarea.focus();
+            
+            // For file uploads, set focus on file input
+            const fileInput = this.querySelector('input[type="file"]');
+            if(fileInput) fileInput.focus();
+        });
+    });
+    
+    // Validate file size before upload
+    document.querySelectorAll('input[type="file"]').forEach(fileInput => {
+        fileInput.addEventListener('change', function() {
+            const maxSize = 5 * 1024 * 1024; // 5MB
+            if(this.files[0] && this.files[0].size > maxSize) {
+                alert('File size exceeds 5MB. Please select a smaller file.');
+                this.value = '';
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

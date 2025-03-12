@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>Patient Dashboard - Welcome, {{ user.full_name }}</h1>
+    {% if messages %}
+    <div class="messages">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    </div>
+   {% endif %}
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+    
+    <!-- Account Details Card -->
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Personal Details</h5>
+            <p class="card-text">
+                <strong>Email:</strong> {{ user.email }}<br>
+                <strong>Full Name:</strong> {{ user.full_name }}<br>
+                <strong>Phone:</strong> {{ user.phone_number }}<br>
+                <strong>Gender:</strong> {{ user.gender|title }}
+            </p>
+            <div class="btn-group">
+                <a href="{% url 'update_profile' %}" class="btn btn-primary btn-sm">Update Profile</a>
+                <a href="{% url 'logout' %}" class="btn btn btn-warning btn-sm">Logout</a>
+                <a href="{% url 'delete_account' %}" class="btn btn-danger btn-sm">Delete Account</a>
+            </div> <br>
+            <strong>Note: There will be a mail sent to the registered email for a sns service subscription. You need to accept that before booking appointments.</strong>
+        </div>
+    </div>
+
+    <!-- My Prescriptions Section -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <h3 class="mb-3">My Prescriptions</h3>
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Doctor</th>
+                            <th>Date & Time</th>
+                            <th>Status</th>
+                            <th>Reason</th>
+                            <th>Prescription</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for appointment in appointments_with_prescriptions %}
+                        <tr>
+                            <td>Dr. {{ appointment.doctor_name }}</td>
+                            <td>{{ appointment.appointment_date|date:"M d, Y" }} at {{ appointment.appointment_time }}</td>
+                            <td>
+                                <span class="badge {% if appointment.status == 'completed' %}bg-success{% elif appointment.status == 'cancelled' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                    {{ appointment.status|title }}
+                                </span>
+                            </td>
+                            <td>{{ appointment.reason|truncatechars:30 }}</td>
+                            <td>
+                                <a href="{% url 'view_prescription' appointment.appointment_id %}" class="btn btn-sm btn-primary" target="_blank">
+                                    <i class="bi bi-file-earmark-medical"></i> View
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center">No prescriptions available.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Available Doctors Section -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <h3 class="mb-4">Available Doctors</h3>
+            <div class="row row-cols-1 row-cols-md-3 g-4">
+                {% for doctor in doctors %}
+                <div class="col">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Dr. {{ doctor.full_name }}</h5>
+                            <div class="doctor-details">
+                                <p class="mb-1"><strong>Specialization:</strong> {{ doctor.specialization }}</p>
+                                <p class="mb-1"><strong>Gender:</strong> {{ doctor.gender|title }}</p>
+                                {% if doctor.qualifications %}
+                                <p class="mb-1"><strong>Qualifications:</strong> {{ doctor.qualifications }}</p>
+                                {% endif %}
+                            </div>
+                            <button class="btn btn-primary mt-3 book-appointment-btn" 
+                                    data-doctor-id="{{ doctor.user_id }}"
+                                    data-doctor-name="{{ doctor.full_name }}"
+                                    data-bs-toggle="modal" 
+                                    data-bs-target="#appointmentModal">
+                                Book Appointment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="col-12">
+                    <div class="alert alert-warning mb-0">
+                        No doctors available for booking at this time.
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Appointment Booking Modal -->
+<div class="modal fade" id="appointmentModal" tabindex="-1" aria-labelledby="appointmentModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="appointmentModalLabel">Book Appointment with <span id="doctorName"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{% url 'book_appointments' %}">
+                {% csrf_token %}
+                <input type="hidden" name="doctor_id" id="doctorId">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="appointmentDate" class="form-label">Appointment Date</label>
+                        <input type="date" class="form-control" id="appointmentDate" name="appointment_date" 
+                               min="{{ today_date|date:'Y-m-d' }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="appointmentTime" class="form-label">Preferred Time</label>
+                        <select class="form-select" id="appointmentTime" name="appointment_time" required>
+                            <option value="">Select Time Slot</option>
+                            <option value="09:00">9:00 AM</option>
+                            <option value="10:00">10:00 AM</option>
+                            <option value="11:00">11:00 AM</option>
+                            <option value="12:00">12:00 PM</option>
+                            <option value="14:00">2:00 PM</option>
+                            <option value="15:00">3:00 PM</option>
+                            <option value="16:00">4:00 PM</option>
+                            <option value="17:00">5:00 PM</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="reason" class="form-label">Reason for Appointment</label>
+                        <textarea class="form-control" id="reason" name="reason" rows="3" 
+                                  placeholder="Please describe the reason for your visit..." required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Submit Request</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Appointment Modal
+        const appointmentModal = document.getElementById('appointmentModal');
+        appointmentModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const doctorId = button.getAttribute('data-doctor-id');
+            const doctorName = button.getAttribute('data-doctor-name');
+
+            if (doctorId) {
+                document.getElementById('doctorId').value = doctorId;  // Ensure value is set
+                document.getElementById('doctorName').textContent = doctorName;  
+            } else {
+                console.error("Doctor ID not found in button attribute!");
+            }
+        });
+    });
+</script>
+{% endblock %}

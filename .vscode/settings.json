@@ -1,0 +1,8 @@
+{
+    "python.analysis.extraPaths": [
+        "./sns_appointment_notification/src"
+    ],
+    "python.autoComplete.extraPaths": [
+        "./sns_appointment_notification/src"
+    ]
+}

@@ -1,0 +1,7 @@
+Metadata-Version: 2.2
+Name: sns_appointment_notification
+Version: 0.1.1
+Requires-Python: >=3.8
+Requires-Dist: boto3>=1.26.0
+Dynamic: requires-dist
+Dynamic: requires-python

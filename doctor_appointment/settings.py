@@ -11,10 +11,12 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
+import sys
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
+sys.path.append(os.path.join(BASE_DIR, "sns_appointment_notification", "src"))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
@@ -50,6 +52,10 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+AUTHENTICATION_BACKENDS = [
+    'appointments.backend.DynamoDBAuthBackend',
+    'django.contrib.auth.backends.ModelBackend',  # Keep the default backend as fallback
+]
 ROOT_URLCONF = 'doctor_appointment.urls'
 
 TEMPLATES = [
@@ -126,3 +132,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # settings.py
 SESSION_COOKIE_AGE = 600  # 10 minute expiration
 SESSION_SAVE_EVERY_REQUEST = True
+# Email settings
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'  # Or your SMTP server
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'asinsayedali008@gmail.com'
+EMAIL_HOST_PASSWORD = 'lonkvtdbdgqhuqdd'  # Use app password for Gmail
+DEFAULT_FROM_EMAIL = 'asinsayedali008@gmail.com'
