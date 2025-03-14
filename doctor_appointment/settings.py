@@ -52,10 +52,6 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-AUTHENTICATION_BACKENDS = [
-    'appointments.backend.DynamoDBAuthBackend',
-    'django.contrib.auth.backends.ModelBackend',  # Keep the default backend as fallback
-]
 ROOT_URLCONF = 'doctor_appointment.urls'
 
 TEMPLATES = [

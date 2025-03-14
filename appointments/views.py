@@ -2,9 +2,9 @@ import boto3
 import os
 from django.contrib import messages
 from django.shortcuts import render, redirect
-from django.contrib.auth import authenticate, login, logout
-from boto3.dynamodb.conditions import Key, Attr
+from boto3.dynamodb.conditions import Key
 from .utils import get_users_table, get_appointments_table
+from django.contrib.auth.hashers import check_password
 import uuid
 import json
 import base64
@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 from sns_appointment_notification.notification.appointment import AppointmentNotification
 from django.core.mail import send_mail
 from django.conf import settings
-from appointments.backend import DynamoDBAuthBackend
 from django.contrib.auth.hashers import make_password
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
@@ -41,11 +40,11 @@ def register(request):
             users_table = get_users_table()
             
             # Check if user exists
-            existing = users_table.query(
+            user_exist = users_table.query(
                 IndexName='EmailIndex',
                 KeyConditionExpression=Key('email').eq(email)
             )
-            if existing['Items']:
+            if user_exist['Items']:
                 return render(request, 'register.html', {"error": "Email already exists"})
 
             user_id = str(uuid.uuid4())
@@ -66,9 +65,9 @@ def register(request):
                 notifier = AppointmentNotification()
                 notifier.sns_client.subscribe_patient(email)
             elif role=='doctor':
-                monitor = AppointmentMonitoring()
-                dashboard_url = monitor.create_doctor_dashboard(user_id, full_name)
-                alarm_name = monitor.create_alarm_for_rejected_appointments(user_id, email)
+               monitor = AppointmentMonitoring()
+               monitor.create_alarm_for_rejected_appointments(user_id, email)
+               messages.info(request, "Please check your email to confirm notifications for appointment activities.")
 
             
                 
@@ -84,45 +83,36 @@ def login_page(request):
     if request.method == "POST":
         email = request.POST.get("email")
         password = request.POST.get("password")
-        
-        # Use your authentication backend directly
-        backend = DynamoDBAuthBackend()
-        user = backend.authenticate(request, username=email, password=password)
+        users_table = get_users_table()
+        try:
+            response = users_table.query(
+                IndexName='EmailIndex',
+                KeyConditionExpression=Key('email').eq(email),
+            )
 
-        if user is not None:
-            # Manually set session data instead of using Django's login
-            request.session['user_id'] = user.user_id
-            request.session['email'] = user.email
-            request.session['is_authenticated'] = True
+            if response['Items'] and len(response['Items']) > 0:
+                user = response['Items'][0]
+                if check_password(password, user.get('password')):
+                    request.session['user_id'] = user.get('user_id')
+                    request.session['email'] = user.get('email')
+                    request.session['is_authenticated'] = True
+                    request.session['user_data'] = {
+                            'user_id': user.get('user_id'),
+                            'email': user.get('email'),
+                            'full_name': user.get('full_name'),
+                            'role': user.get('role'),
+                            'gender': user.get('gender'),
+                            'phone_number': user.get('phone_number'),
+                            'specialization': user.get('specialization')
+                        }
+                    return redirect('dashboard')
             
-            # Store additional data in session
-            request.session['user_data'] = {
-                'user_id': user.user_id,
-                'email': user.email,
-                'full_name': user.full_name,
-                'role': user.role,
-                'gender':  user.gender,
-                'phone_number': user.phone_number,
-                'specialization': getattr(user, 'specialization', None)
-            }   
-            return redirect("dashboard")
-        else:
             return render(request, "login.html", {"error": "Invalid credentials"})
-
-    return render(request, "login.html")
+        except Exception as e:
+            return render(request, 'login.html', {"error": str(e)})
+    return render(request, 'login.html')
 
 def logout_view(request):
-    # Clear all specific session keys we've set
-    if 'user_id' in request.session:
-        del request.session['user_id']
-    if 'email' in request.session:
-        del request.session['email']
-    if 'is_authenticated' in request.session:
-        del request.session['is_authenticated']
-    if 'user_data' in request.session:
-        del request.session['user_data']
-    
-    # Flush the entire session for good measure
     request.session.flush()
     
     return redirect('home')
@@ -295,6 +285,7 @@ def delete_account(request):
     
     # If not POST request, redirect to dashboard
     return redirect('dashboard')
+
 def dashboard(request):
     if not request.session.get('is_authenticated', False):
         return redirect('login')
@@ -304,11 +295,6 @@ def dashboard(request):
         users_table = get_users_table()
         
         if user_data.get('role') == 'doctor':
-            # Doctor dashboard code remains the same
-            doctor_details = users_table.get_item(
-                Key={'user_id': user_data['user_id']}
-            ).get('Item', {})
-            
             appointments_table = get_appointments_table()
             response = appointments_table.query(
                 IndexName='DoctorAppointmentsIndex',
@@ -319,11 +305,11 @@ def dashboard(request):
             
             context = {
                 'user': {
-                    'full_name': doctor_details.get('full_name', ''),
-                    'email': doctor_details.get('email', ''),
-                    'phone_number': doctor_details.get('phone_number', ''),
-                    'gender': doctor_details.get('gender', ''),
-                    'specialization': doctor_details.get('specialization', '')
+                    'full_name': user_data.get('full_name', ''),
+                    'email': user_data.get('email', ''),
+                    'phone_number': user_data.get('phone_number', ''),
+                    'gender': user_data.get('gender', ''),
+                    'specialization': user_data.get('specialization', '')
                 },
                 'pending_appointments': [a for a in appointments if a['status'] == 'pending'],
                 'approved_appointments': [a for a in appointments if a['status'] == 'approved'],
@@ -332,14 +318,13 @@ def dashboard(request):
             return render(request, 'doctordashboard.html', context)
         else:
             # Patient dashboard
-            user_details = users_table.get_item(
-                Key={'user_id': user_data['user_id']}
-            ).get('Item', {})
+            user_details = request.session.get('user_data',{})
             
             # Get all appointments for this user with a scan
             appointments_table = get_appointments_table()
-            response = appointments_table.scan(
-                FilterExpression=Key('user_id').eq(user_data['user_id'])
+            response = appointments_table.query(
+            IndexName='UserAppointmentsIndex', 
+            KeyConditionExpression=Key('user_id').eq(user_data['user_id'])
             )
             all_appointments = response.get('Items', [])
             
@@ -349,11 +334,11 @@ def dashboard(request):
             ]
             
             # Get doctors for booking section
-            doctors = users_table.scan(
-                FilterExpression='#role = :role_val',
-                ExpressionAttributeNames={'#role': 'role'},
-                ExpressionAttributeValues={':role_val': 'doctor'}
-            ).get('Items', [])
+            response = users_table.query(
+            IndexName='RoleIndex',  
+            KeyConditionExpression=Key('role').eq('doctor')
+            )
+            doctors = response.get('Items', [])
             
             context = {
                 'user': {
@@ -372,7 +357,7 @@ def dashboard(request):
         messages.error(request, f"Error loading dashboard: {str(e)}")
         return redirect('home')
 
-# In paste-2.txt, modify the book_appointments function to properly log appointment creation
+
 
 def book_appointments(request):
     if not request.session.get('is_authenticated', False) or request.session['user_data']['role'] != 'patient':
@@ -387,10 +372,6 @@ def book_appointments(request):
             reason = request.POST.get('reason', '')
             patient_id = request.session['user_data']['user_id']
             patient_name = request.session['user_data']['full_name']
-            # Validate required fields
-            if not all([doctor_id, appointment_date, appointment_time]):
-                messages.error(request, "Please fill all required fields")
-                return redirect('dashboard')
 
             # Check date validity
             appointment_datetime = datetime.strptime(f"{appointment_date} {appointment_time}", "%Y-%m-%d %H:%M")
@@ -401,9 +382,6 @@ def book_appointments(request):
             # Get doctor details
             users_table = get_users_table()
             doctor = users_table.get_item(Key={'user_id': doctor_id}).get('Item')
-            if not doctor or doctor['role'] != 'doctor':
-                messages.error(request, "Invalid doctor selection")
-                return redirect('dashboard')
 
             appointments_table = get_appointments_table()
             # Create appointment
@@ -422,9 +400,6 @@ def book_appointments(request):
                 'updated_at': datetime.now().isoformat()
             })
             
-            # Log the appointment creation to CloudWatch
-            monitor = AppointmentMonitoring()
-            monitor.log_appointment_created(doctor_id)
 
             messages.success(request, "Appointment request sent successfully!")
             return redirect('dashboard')
@@ -436,7 +411,7 @@ def book_appointments(request):
 
     return redirect('dashboard')
 
-# Also modify the handle_appointment_status function to properly log status changes
+
 def handle_appointment_status(request, appointment_id, status):
     if not request.session.get('is_authenticated', False):
         return redirect('login')
