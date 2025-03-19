@@ -383,25 +383,42 @@ def book_appointments(request):
             users_table = get_users_table()
             doctor = users_table.get_item(Key={'user_id': doctor_id}).get('Item')
 
-            appointments_table = get_appointments_table()
-            # Create appointment
-            appointment_id = str(uuid.uuid4())
-            appointments_table.put_item(Item={
-                'appointment_id': appointment_id,
-                'user_id': patient_id,  # Range key (patient ID)
+            # Prepare payload for Lambda function
+            lambda_payload = {
+                'patient_id': patient_id,
                 'doctor_id': doctor_id,
                 'patient_name': patient_name,
                 'doctor_name': doctor['full_name'],
                 'appointment_date': appointment_date,
                 'appointment_time': appointment_time,
                 'reason': reason,
-                'status': 'pending',
-                'created_at': datetime.now().isoformat(),
-                'updated_at': datetime.now().isoformat()
-            })
+                'status': 'pending'
+            }
             
-
-            messages.success(request, "Appointment request sent successfully!")
+            # Initialize Lambda client
+            lambda_client = boto3.client(
+                'lambda',
+                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+                region_name=os.getenv('AWS_DEFAULT_REGION')
+            )
+            
+            # Invoke Lambda function
+            response = lambda_client.invoke(
+                FunctionName='store_appointment_function',
+                InvocationType='RequestResponse',
+                Payload=json.dumps(lambda_payload)
+            )
+            
+            # Process Lambda response
+            lambda_response = json.loads(response['Payload'].read().decode())
+            
+            if lambda_response.get('statusCode') == 200:
+                messages.success(request, "Appointment request sent successfully!")
+            else:
+                error_message = json.loads(lambda_response.get('body', '{}')).get('message', 'Unknown error')
+                messages.error(request, f"Failed to book appointment: {error_message}")
+                
             return redirect('dashboard')
 
         except Exception as e:
@@ -410,7 +427,6 @@ def book_appointments(request):
             return redirect('dashboard')
 
     return redirect('dashboard')
-
 
 def handle_appointment_status(request, appointment_id, status):
     if not request.session.get('is_authenticated', False):
@@ -473,122 +489,108 @@ def handle_appointment_status(request, appointment_id, status):
         messages.error(request, f"Error updating appointment: {str(e)}")
         return redirect('dashboard')
     
-AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
-ALLOWED_FILE_TYPES = {'pdf', 'png', 'jpg', 'jpeg', 'doc', 'docx'}
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
-
-import base64
-
 def upload_prescription(request, appointment_id):
+    """
+    Handles prescription image upload from doctors to S3.
+    Only allows image files up to 5MB in size.
+    """
+    # Check if user is logged in and is a doctor
     if not request.session.get('is_authenticated', False) or request.session.get('user_data', {}).get('role') != 'doctor':
         return redirect('login')
     
+    # Define allowed file types and size limits
+    ALLOWED_FILE_TYPES = ['jpg', 'jpeg', 'png', 'gif']  # Only image formats
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+    
     try:
+        # Step 1: Get and validate the appointment
         appointments_table = get_appointments_table()
+        doctor_id = request.session['user_data']['user_id']
         
-        # First query using GSI
+        # Find the appointment for this doctor
         response = appointments_table.query(
             IndexName='DoctorAppointmentsIndex',
-            KeyConditionExpression=Key('doctor_id').eq(request.session['user_data']['user_id'])
+            KeyConditionExpression=Key('doctor_id').eq(doctor_id)
         )
         
-        # Filter results locally for the appointment ID
+        # Find the specific appointment we want
         matching_appointments = [
             item for item in response['Items']
             if item['appointment_id'] == appointment_id
         ]
         
+        # If appointment not found or doesn't belong to this doctor
         if not matching_appointments:
             messages.error(request, "Appointment not found or unauthorized")
             return redirect('dashboard')
             
         appointment = matching_appointments[0]
-        user_id = appointment['user_id']
+        user_id = appointment['user_id']  # Patient's ID
 
-        # Get full item using primary key
-        full_appointment = appointments_table.get_item(
-            Key={
-                'appointment_id': appointment_id,
-                'user_id': user_id
-            }
-        ).get('Item')
-
-        if not appointment:
-            messages.error(request, "Appointment not found")
-            return redirect('dashboard')
-
-        # Verify doctor ownership
-        if appointment.get('doctor_id') != request.session['user_data']['user_id']:
+        # Additional validation checks
+        if appointment.get('doctor_id') != doctor_id:
             messages.error(request, "Unauthorized access to appointment")
             return redirect('dashboard')
 
-        # Check appointment status
         if appointment['status'] != 'approved':
             messages.error(request, "Cannot upload prescription for unapproved appointments")
             return redirect('dashboard')
 
+        # Step 2: Process file upload (if POST request with file)
         if request.method == 'POST' and request.FILES.get('prescription_file'):
             prescription_file = request.FILES['prescription_file']
             
-            # File validation
+            # Check file extension (make sure it's an image)
             file_extension = prescription_file.name.split('.')[-1].lower()
             if file_extension not in ALLOWED_FILE_TYPES:
                 messages.error(request, f"Invalid file type. Allowed types: {', '.join(ALLOWED_FILE_TYPES)}")
                 return redirect('dashboard')
             
+            # Check file size
             if prescription_file.size > MAX_FILE_SIZE:
                 messages.error(request, "File size exceeds 5MB limit")
                 return redirect('dashboard')
 
-            # Process file
-            file_content = prescription_file.read()
-            encoded_file_content = base64.b64encode(file_content).decode('utf-8')
+            # Step 3: Upload file to S3
+            # Create a unique filename to avoid overwriting
+            import uuid
+            from datetime import datetime
             
-            # Lambda invocation
-            lambda_client = boto3.client('lambda')
+            filename = f"{uuid.uuid4()}.{file_extension}"
+            s3_path = f"prescriptions/{appointment_id}/{filename}"
+            
+            # Set up S3 client and get bucket name from environment
+            s3_client = boto3.client('s3')
+            bucket_name = os.environ.get('AWS_STORAGE_BUCKET_NAME')
+            
             try:
-                response = lambda_client.invoke(
-                    FunctionName='upload_prescription_function',
-                    InvocationType='RequestResponse',
-                    Payload=json.dumps({
-                        'appointment_id': appointment_id,
-                        'user_id': appointment['user_id'],
-                        'file_content': encoded_file_content,
-                        'file_extension': file_extension,
-                        'content_type': prescription_file.content_type
-                    })
+                # Upload the file to S3
+                s3_client.upload_fileobj(
+                    prescription_file,
+                    bucket_name,
+                    s3_path,
+                    ExtraArgs={'ContentType': prescription_file.content_type}
                 )
-            except ClientError as e:
-                logger.error(f"AWS API error: {str(e)}")
-                messages.error(request, "File service temporarily unavailable")
-                return redirect('dashboard')
-
-            result = json.loads(response['Payload'].read())
-            
-            # Debugging: Print the result from the Lambda function
-            print(f"Lambda function result: {result}")
-            
-            if response['StatusCode'] == 200:
-                body = json.loads(result.get('body', '{}'))
-                if 'prescription_url' not in body:
-                    logger.error("Missing prescription_url in Lambda response")
-                    messages.error(request, "Failed to get prescription URL")
-                    return redirect('dashboard')
                 
-                # Update DynamoDB
+                # Create the URL for the uploaded file
+                prescription_url = f"https://{bucket_name}.s3.amazonaws.com/{s3_path}"
+                
+                # Step 4: Update the appointment record in DynamoDB
                 appointments_table.update_item(
                     Key={'appointment_id': appointment_id, 'user_id': user_id},
                     UpdateExpression='SET prescription_url = :url, prescription_uploaded_at = :time',
                     ExpressionAttributeValues={
-                        ':url': body['prescription_url'],
-                        ':time': body.get('uploaded_at', datetime.now().isoformat())
+                        ':url': prescription_url,
+                        ':time': datetime.now().isoformat()
                     }
                 )
 
-                # Send notification
+                # Step 5: Send notification to patient
                 try:
                     users_table = get_users_table()
-                    patient = users_table.get_item(Key={'user_id': appointment['user_id']})['Item']
+                    patient = users_table.get_item(Key={'user_id': user_id})['Item']
+                    
+                    # Send notification using your existing notification service
                     AppointmentNotification().publish_uploaded_perscription(
                         patient_email=patient['email']
                     )
@@ -596,13 +598,11 @@ def upload_prescription(request, appointment_id):
                 except Exception as e:
                     logger.error(f"Notification failed: {str(e)}")
                     messages.success(request, "Prescription uploaded (notification failed)")
-
-            else:
-                error_body = json.loads(result.get('body', '{}'))
-                error_msg = error_body.get('error', 'Unknown error')
-                logger.error(f"Lambda error: {error_msg}")
-                messages.error(request, f"Upload failed: {error_msg}")
-
+                
+            except Exception as e:
+                logger.error(f"S3 upload error: {str(e)}")
+                messages.error(request, "Failed to upload prescription file")
+                
         return redirect('dashboard')
 
     except Exception as e:
@@ -611,25 +611,31 @@ def upload_prescription(request, appointment_id):
         return redirect('dashboard')
     
 def view_prescription(request, appointment_id):
+    """
+    Handles viewing of prescription images from S3.
+    Ensures users can only view prescriptions they are authorized to see.
+    Uses pre-signed URLs to securely access S3 files.
+    """
+    # Check if user is logged in
     if not request.session.get('is_authenticated', False):
         return redirect('login')
     
     try:
-        # Validate appointment ID
+        # Step 1: Validate appointment ID format
         try:
-            uuid.UUID(appointment_id)
+            uuid.UUID(appointment_id)  # Check if it's a valid UUID
         except ValueError:
             messages.error(request, "Invalid appointment ID")
             return redirect('dashboard')
 
-        # Get appointment
+        # Step 2: Get user information and role
         appointments_table = get_appointments_table()
         user_id = request.session['user_data']['user_id']
         user_role = request.session['user_data'].get('role', 'patient')
         
-        # Try to get the appointment directly first (this works for patients)
+        # Step 3: Get the appointment details based on user role
         if user_role == 'patient':
-            # Patient is viewing their own prescription
+            # Patient viewing their own prescription
             response = appointments_table.get_item(
                 Key={
                     'appointment_id': appointment_id,
@@ -638,14 +644,14 @@ def view_prescription(request, appointment_id):
             )
             appointment = response.get('Item')
         else:
-            # Doctor is viewing a prescription they created
-            # First query using GSI to get user_id
+            # Doctor viewing a prescription they created
+            # Find appointments for this doctor
             response = appointments_table.query(
                 IndexName='DoctorAppointmentsIndex',
                 KeyConditionExpression=Key('doctor_id').eq(user_id)
             )
             
-            # Filter results locally for the appointment ID
+            # Find the specific appointment
             matching_appointments = [
                 item for item in response['Items']
                 if item['appointment_id'] == appointment_id
@@ -655,75 +661,79 @@ def view_prescription(request, appointment_id):
                 messages.error(request, "Appointment not found or unauthorized")
                 return redirect('dashboard')
                 
-            appointment = matching_appointments[0]
-            # Get full item using primary key
+            # Get full appointment details
+            appointment_brief = matching_appointments[0]
             response = appointments_table.get_item(
                 Key={
                     'appointment_id': appointment_id,
-                    'user_id': appointment['user_id']
+                    'user_id': appointment_brief['user_id']
                 }
             )
             appointment = response.get('Item')
         
-        # Check if we got an appointment
+        # Step 4: Check if appointment exists
         if not appointment:
             messages.error(request, "Appointment not found")
             return redirect('dashboard')
-
-        # Add debugging
-        print(f"Found appointment: {appointment}")
         
-        # Check prescription exists
+        # Step 5: Check if prescription exists
         prescription_url = appointment.get('prescription_url')
         if not prescription_url:
-            messages.error(request, "No prescription available")
+            messages.error(request, "No prescription available for this appointment")
             return redirect('dashboard')
 
-        # Get presigned URL
-        lambda_client = boto3.client('lambda')
+        # Step 6: Extract the S3 key from the prescription URL
+        # The URL format is typically: https://bucket-name.s3.amazonaws.com/path/to/file
+        # We need to extract the path part (everything after the bucket name)
+        
         try:
-            payload = json.dumps({'prescription_url': prescription_url})
-            print(f"Calling Lambda with payload: {payload}")
+            # Parse the S3 URL to get the key
+            from urllib.parse import urlparse
+            parsed_url = urlparse(prescription_url)
             
-            response = lambda_client.invoke(
-                FunctionName='view_prescription_function',
-                InvocationType='RequestResponse',
-                Payload=payload
+            # Get bucket name from environment variables to ensure consistency
+            bucket_name = os.environ.get('AWS_STORAGE_BUCKET_NAME')
+            
+            # Extract the key (removing the leading '/')
+            s3_key = parsed_url.path.lstrip('/')
+            
+            # Alternative approach if the above doesn't work:
+            # If URL is like https://bucket-name.s3.amazonaws.com/path/to/file
+            # s3_key = prescription_url.split(f"{bucket_name}.s3.amazonaws.com/")[1]
+            
+            # Initialize S3 client
+            s3_client = boto3.client('s3')
+            
+            # Generate a pre-signed URL that's valid for 5 minutes
+            presigned_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': bucket_name,
+                    'Key': s3_key
+                },
+                ExpiresIn=300  # URL expires in 5 minutes
             )
-        except ClientError as e:
-            logger.error(f"AWS API error: {str(e)}")
-            messages.error(request, "Prescription service unavailable")
-            return redirect('dashboard')
-
-        result = json.loads(response['Payload'].read())
-        
-        # Enhanced debugging
-        print(f"Lambda StatusCode: {response['StatusCode']}")
-        print(f"Lambda function result: {result}")
-        
-        if response['StatusCode'] == 200:
-            body = json.loads(result.get('body', '{}')) if isinstance(result.get('body'), str) else result.get('body', {})
-            presigned_url = body.get('presigned_url')
             
-            if not presigned_url:
-                messages.error(request, "Invalid prescription URL returned")
-                return redirect('dashboard')
-            
-            print(f"Redirecting to presigned URL: {presigned_url}")
+            # Redirect to the pre-signed URL
+            print(f"Redirecting to presigned URL for: {s3_key}")
             response = redirect(presigned_url)
-            # Security headers
+            
+            # Add security headers
             response['Content-Security-Policy'] = "default-src 'none'"
             response['X-Content-Type-Options'] = 'nosniff'
             return response
-        else:
-            error_body = json.loads(result.get('body', '{}')) if isinstance(result.get('body'), str) else result.get('body', {})
-            error_message = error_body.get('error', 'Failed to view prescription')
-            messages.error(request, f"Lambda error: {error_message}")
+            
+        except Exception as e:
+            logger.error(f"Error generating presigned URL: {str(e)}")
+            messages.error(request, "Unable to access prescription file")
             return redirect('dashboard')
 
     except Exception as e:
+        # Log detailed error for debugging
         import traceback
         error_details = traceback.format_exc()
         logger.error(f"View error: {str(e)}\n{error_details}")
-        messages.error(request, f"Failed to view prescription: {str(e)}")
+        
+        # Show simpler error to user
+        messages.error(request, "Failed to view prescription")
         return redirect('dashboard')

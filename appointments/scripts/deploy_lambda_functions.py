@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Modify create_lambda_function in deploy_lambda_functions.py
 def create_lambda_function(function_name, handler, role_arn, zip_file_path, runtime='python3.8'):
     client = boto3.client('lambda',
                           aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
@@ -22,15 +21,15 @@ def create_lambda_function(function_name, handler, role_arn, zip_file_path, runt
         Role=role_arn,
         Handler=handler,
         Code=dict(ZipFile=zipped_code),
-        Timeout=300,
+        Timeout=60,
         MemorySize=128,
-        Publish=True,
-        Environment={  # Add this section
-            'Variables': {
-                'AWS_STORAGE_BUCKET_NAME': os.getenv('AWS_STORAGE_BUCKET_NAME'),
-            }
-        }
+        Publish=True
     )
+    
+    function_arn = response['FunctionArn']
+    print(f"Created Lambda function: {function_name}")
+    print(f"Function ARN: {function_arn}")
+    
     return response
 
 def zip_lambda_function(file_name, zip_file_name):
@@ -41,27 +40,9 @@ if __name__ == "__main__":
     # Load environment variables
     load_dotenv()
 
-    # Print environment variables for debugging
-    print("AWS_ACCESS_KEY_ID:", os.getenv('AWS_ACCESS_KEY_ID'))
-    print("AWS_SECRET_ACCESS_KEY:", os.getenv('AWS_SECRET_ACCESS_KEY'))
-    print("AWS_DEFAULT_REGION:", os.getenv('AWS_DEFAULT_REGION'))
-    print("LAMBDA_ROLE_ARN:", os.getenv('LAMBDA_ROLE_ARN'))
-
-    # Print the current working directory
-    print("Current working directory:", os.getcwd())
-
-    # List the files in the current directory
-    print("Files in the current directory:", os.listdir())
-
     # Define the role ARN for the Lambda function
     role_arn = os.getenv('LAMBDA_ROLE_ARN')
 
-    # Create and deploy the upload prescription Lambda function
-    zip_lambda_function('upload_prescription.py', 'upload_prescription.zip')
-    create_lambda_function('upload_prescription_function', 'upload_prescription.lambda_handler', role_arn, 'upload_prescription.zip')
-
-    # Create and deploy the view prescription Lambda function
-    
-    zip_lambda_function('view_prescription.py', 'view_prescription.zip')
-    create_lambda_function('view_prescription_function', 'view_prescription.lambda_handler', role_arn, 'view_prescription.zip')
-
+    # Create and deploy the store appointment Lambda function
+    zip_lambda_function('store_appointment.py', 'store_appointment.zip')
+    create_lambda_function('store_appointment_function', 'store_appointment.lambda_handler', role_arn, 'store_appointment.zip')

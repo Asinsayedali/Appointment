@@ -11,9 +11,10 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
+from dotenv import load_dotenv
 import sys
 import os
-
+load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(os.path.join(BASE_DIR, "sns_appointment_notification", "src"))
@@ -22,13 +23,23 @@ sys.path.append(os.path.join(BASE_DIR, "sns_appointment_notification", "src"))
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-rs#3oq%03zigoa=(i+)bc0^gfw&@8n=n033-l48f%4y9m_i%w^'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-rs#3oq%03zigoa=(i+)bc0^gfw&@8n=n033-l48f%4y9m_i%w^')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = 'True'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['.elasticbeanstalk.com', '*','django-env.eba-dnw4x2pm.us-east-1.elasticbeanstalk.com','localhost','127.0.0.1:8000']
 
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION')
+
+
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Application definition
 
@@ -124,7 +135,8 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
+SNS_TOPIC_ARN = os.getenv('SNS_TOPIC_ARN')
+LAMBDA_ROLE_ARN = os.getenv('LAMBDA_ROLE_ARN')
 # settings.py
 SESSION_COOKIE_AGE = 600  # 10 minute expiration
 SESSION_SAVE_EVERY_REQUEST = True
@@ -133,6 +145,6 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'  # Or your SMTP server
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'asinsayedali008@gmail.com'
-EMAIL_HOST_PASSWORD = 'lonkvtdbdgqhuqdd'  # Use app password for Gmail
-DEFAULT_FROM_EMAIL = 'asinsayedali008@gmail.com'
+EMAIL_HOST_USER =  os.getenv('EMAIL_HOST_USER')  # Your Gmail account
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD') # Use app password for Gmail
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')  # This is the email address that will be used to send the emails
