@@ -7,7 +7,7 @@ from .utils import get_users_table, get_appointments_table
 from django.contrib.auth.hashers import check_password
 import uuid
 import json
-import base64
+from .scripts.creates3 import upload_file_object,generate_presigned_url
 import secrets
 from datetime import datetime, timedelta
 from sns_appointment_notification.notification.appointment import AppointmentNotification
@@ -330,7 +330,7 @@ def dashboard(request):
             
             # Filter for appointments with prescriptions
             appointments_with_prescriptions = [
-                a for a in all_appointments if a.get('prescription_url')
+                a for a in all_appointments if a.get('prescription_key')
             ]
             
             # Get doctors for booking section
@@ -489,18 +489,18 @@ def handle_appointment_status(request, appointment_id, status):
         messages.error(request, f"Error updating appointment: {str(e)}")
         return redirect('dashboard')
     
+
+
+
 def upload_prescription(request, appointment_id):
     """
     Handles prescription image upload from doctors to S3.
     Only allows image files up to 5MB in size.
+    Uses a private S3 bucket for secure storage.
     """
     # Check if user is logged in and is a doctor
     if not request.session.get('is_authenticated', False) or request.session.get('user_data', {}).get('role') != 'doctor':
         return redirect('login')
-    
-    # Define allowed file types and size limits
-    ALLOWED_FILE_TYPES = ['jpg', 'jpeg', 'png', 'gif']  # Only image formats
-    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
     
     try:
         # Step 1: Get and validate the appointment
@@ -540,48 +540,40 @@ def upload_prescription(request, appointment_id):
         if request.method == 'POST' and request.FILES.get('prescription_file'):
             prescription_file = request.FILES['prescription_file']
             
-            # Check file extension (make sure it's an image)
-            file_extension = prescription_file.name.split('.')[-1].lower()
-            if file_extension not in ALLOWED_FILE_TYPES:
-                messages.error(request, f"Invalid file type. Allowed types: {', '.join(ALLOWED_FILE_TYPES)}")
-                return redirect('dashboard')
+            # File validation - check if it's an image and within size limit
+            allowed_types = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf']
+            max_size = 5 * 1024 * 1024  # 5MB
             
-            # Check file size
-            if prescription_file.size > MAX_FILE_SIZE:
-                messages.error(request, "File size exceeds 5MB limit")
+            if prescription_file.content_type not in allowed_types:
+                messages.error(request, "Only JPG, PNG and PDF files are allowed")
+                return redirect('dashboard')
+                
+            if prescription_file.size > max_size:
+                messages.error(request, "File size must be under 5MB")
                 return redirect('dashboard')
 
             # Step 3: Upload file to S3
             # Create a unique filename to avoid overwriting
-            import uuid
-            from datetime import datetime
-            
-            filename = f"{uuid.uuid4()}.{file_extension}"
-            s3_path = f"prescriptions/{appointment_id}/{filename}"
-            
-            # Set up S3 client and get bucket name from environment
-            s3_client = boto3.client('s3')
+            file_extension = os.path.splitext(prescription_file.name)[1]
+            unique_filename = f"prescription_{appointment_id}_{uuid.uuid4().hex}{file_extension}"
             bucket_name = os.environ.get('AWS_STORAGE_BUCKET_NAME')
             
             try:
                 # Upload the file to S3
-                s3_client.upload_fileobj(
-                    prescription_file,
-                    bucket_name,
-                    s3_path,
-                    ExtraArgs={'ContentType': prescription_file.content_type}
-                )
+                s3_key = upload_file_object(prescription_file, bucket_name, unique_filename)
                 
-                # Create the URL for the uploaded file
-                prescription_url = f"https://{bucket_name}.s3.amazonaws.com/{s3_path}"
+                if not s3_key:
+                    messages.error(request, "Failed to upload prescription file")
+                    return redirect('dashboard')
                 
                 # Step 4: Update the appointment record in DynamoDB
                 appointments_table.update_item(
                     Key={'appointment_id': appointment_id, 'user_id': user_id},
-                    UpdateExpression='SET prescription_url = :url, prescription_uploaded_at = :time',
+                    UpdateExpression='SET prescription_key = :key, prescription_uploaded_at = :time, prescription_filename = :filename',
                     ExpressionAttributeValues={
-                        ':url': prescription_url,
-                        ':time': datetime.now().isoformat()
+                        ':key': s3_key,
+                        ':time': datetime.now().isoformat(),
+                        ':filename': prescription_file.name
                     }
                 )
 
@@ -596,144 +588,83 @@ def upload_prescription(request, appointment_id):
                     )
                     messages.success(request, "Prescription uploaded and patient notified")
                 except Exception as e:
-                    logger.error(f"Notification failed: {str(e)}")
+                    print(f"Notification failed: {str(e)}")
                     messages.success(request, "Prescription uploaded (notification failed)")
                 
             except Exception as e:
-                logger.error(f"S3 upload error: {str(e)}")
+                print(f"S3 upload error: {str(e)}")
                 messages.error(request, "Failed to upload prescription file")
                 
         return redirect('dashboard')
 
     except Exception as e:
-        logger.error(f"Upload error: {str(e)}", exc_info=True)
+        print(f"Upload error: {str(e)}")
         messages.error(request, "An unexpected error occurred")
         return redirect('dashboard')
     
 def view_prescription(request, appointment_id):
     """
-    Handles viewing of prescription images from S3.
-    Ensures users can only view prescriptions they are authorized to see.
-    Uses pre-signed URLs to securely access S3 files.
+    Generates a temporary link for viewing a prescription
     """
-    # Check if user is logged in
+    # Check if user is logged in (either patient or doctor)
     if not request.session.get('is_authenticated', False):
         return redirect('login')
     
     try:
-        # Step 1: Validate appointment ID format
-        try:
-            uuid.UUID(appointment_id)  # Check if it's a valid UUID
-        except ValueError:
-            messages.error(request, "Invalid appointment ID")
-            return redirect('dashboard')
-
-        # Step 2: Get user information and role
-        appointments_table = get_appointments_table()
-        user_id = request.session['user_data']['user_id']
-        user_role = request.session['user_data'].get('role', 'patient')
+        # Get user info and appointment
+        user_data = request.session.get('user_data', {})
+        user_id = user_data.get('user_id')
+        user_role = user_data.get('role')
         
-        # Step 3: Get the appointment details based on user role
-        if user_role == 'patient':
-            # Patient viewing their own prescription
-            response = appointments_table.get_item(
-                Key={
-                    'appointment_id': appointment_id,
-                    'user_id': user_id
-                }
-            )
-            appointment = response.get('Item')
-        else:
-            # Doctor viewing a prescription they created
-            # Find appointments for this doctor
+        appointments_table = get_appointments_table()
+        
+        # Different query based on user role
+        if user_role == 'doctor':
+            # For doctors - check through their appointments 
             response = appointments_table.query(
                 IndexName='DoctorAppointmentsIndex',
                 KeyConditionExpression=Key('doctor_id').eq(user_id)
             )
             
-            # Find the specific appointment
             matching_appointments = [
                 item for item in response['Items']
                 if item['appointment_id'] == appointment_id
             ]
-            
-            if not matching_appointments:
-                messages.error(request, "Appointment not found or unauthorized")
-                return redirect('dashboard')
-                
-            # Get full appointment details
-            appointment_brief = matching_appointments[0]
+        else:
+            # For patients - get directly
             response = appointments_table.get_item(
-                Key={
-                    'appointment_id': appointment_id,
-                    'user_id': appointment_brief['user_id']
-                }
+                Key={'appointment_id': appointment_id, 'user_id': user_id}
             )
-            appointment = response.get('Item')
+            matching_appointments = [response.get('Item')] if 'Item' in response else []
         
-        # Step 4: Check if appointment exists
-        if not appointment:
-            messages.error(request, "Appointment not found")
+        # If appointment not found or unauthorized
+        if not matching_appointments:
+            messages.error(request, "Prescription not found or unauthorized")
             return redirect('dashboard')
+            
+        appointment = matching_appointments[0]
         
-        # Step 5: Check if prescription exists
-        prescription_url = appointment.get('prescription_url')
-        if not prescription_url:
-            messages.error(request, "No prescription available for this appointment")
+        # Check if prescription exists
+        if 'prescription_key' not in appointment:
+            messages.error(request, "No prescription has been uploaded yet")
             return redirect('dashboard')
-
-        # Step 6: Extract the S3 key from the prescription URL
-        # The URL format is typically: https://bucket-name.s3.amazonaws.com/path/to/file
-        # We need to extract the path part (everything after the bucket name)
+            
+        # Generate a temporary URL for viewing/downloading
+        bucket_name = os.environ.get('AWS_STORAGE_BUCKET_NAME')
+        prescription_key = appointment.get('prescription_key')
+        original_filename = appointment.get('prescription_filename', 'prescription.pdf')
         
-        try:
-            # Parse the S3 URL to get the key
-            from urllib.parse import urlparse
-            parsed_url = urlparse(prescription_url)
-            
-            # Get bucket name from environment variables to ensure consistency
-            bucket_name = os.environ.get('AWS_STORAGE_BUCKET_NAME')
-            
-            # Extract the key (removing the leading '/')
-            s3_key = parsed_url.path.lstrip('/')
-            
-            # Alternative approach if the above doesn't work:
-            # If URL is like https://bucket-name.s3.amazonaws.com/path/to/file
-            # s3_key = prescription_url.split(f"{bucket_name}.s3.amazonaws.com/")[1]
-            
-            # Initialize S3 client
-            s3_client = boto3.client('s3')
-            
-            # Generate a pre-signed URL that's valid for 5 minutes
-            presigned_url = s3_client.generate_presigned_url(
-                'get_object',
-                Params={
-                    'Bucket': bucket_name,
-                    'Key': s3_key
-                },
-                ExpiresIn=300  # URL expires in 5 minutes
-            )
-            
-            # Redirect to the pre-signed URL
-            print(f"Redirecting to presigned URL for: {s3_key}")
-            response = redirect(presigned_url)
-            
-            # Add security headers
-            response['Content-Security-Policy'] = "default-src 'none'"
-            response['X-Content-Type-Options'] = 'nosniff'
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error generating presigned URL: {str(e)}")
-            messages.error(request, "Unable to access prescription file")
+        # Generate presigned URL (valid for 1 hour)
+        presigned_url = generate_presigned_url(bucket_name, prescription_key)
+        
+        if not presigned_url:
+            messages.error(request, "Unable to generate prescription link")
             return redirect('dashboard')
-
+            
+        # Return a page with the link or redirect directly
+        return redirect(presigned_url)
+        
     except Exception as e:
-        # Log detailed error for debugging
-        import traceback
-        error_details = traceback.format_exc()
-        logger.error(f"View error: {str(e)}\n{error_details}")
-        
-        # Show simpler error to user
-        messages.error(request, "Failed to view prescription")
+        print(f"Prescription view error: {str(e)}")
+        messages.error(request, "An error occurred while retrieving the prescription")
         return redirect('dashboard')

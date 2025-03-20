@@ -28,7 +28,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-rs#3oq%03zigoa=(i+)bc0^gfw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = 'True'
 
-ALLOWED_HOSTS = ['.elasticbeanstalk.com', '*','django-env.eba-dnw4x2pm.us-east-1.elasticbeanstalk.com','localhost','127.0.0.1:8000']
+ALLOWED_HOSTS = ['appenv.eba-2w3hqtmf.us-east-1.elasticbeanstalk.com','127.0.0.1']
 
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
